@@ -1,0 +1,256 @@
+package com.example.caspe.firebasedatabase;
+
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.support.design.widget.FloatingActionButton;
+import android.support.v7.app.AlertDialog;
+import android.support.v7.app.AppCompatActivity;
+import android.os.Bundle;
+import android.text.InputType;
+import android.util.Log;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.AdapterView;
+import android.widget.EditText;
+import android.widget.ListView;
+import android.widget.TextView;
+
+import com.google.firebase.perf.FirebasePerformance;
+import com.google.firebase.perf.metrics.Trace;
+
+import com.crashlytics.android.Crashlytics;
+import com.example.caspe.firebasedatabase.Model.ShoppingList;
+import com.example.caspe.firebasedatabase.Model.User;
+import com.firebase.ui.auth.AuthUI;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GoogleApiAvailability;
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
+import com.google.firebase.database.DatabaseReference;
+import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.database.ValueEventListener;
+import com.google.firebase.remoteconfig.FirebaseRemoteConfig;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+public class MainActivity extends AppCompatActivity {
+    private ArrayList<Map<String, Boolean>> data;
+    ShoppingList shop;
+    List<User> users;
+    private FirebaseAuth mAuth;
+    private int SIGN_IN_REQUEST_CODE = 1;
+    private String TAG;
+    User CurrentUser;
+    private String m_Text = "";
+    private CardArrayAdapter cardArrayAdapter;
+    private ListView listView;
+    private ArrayList<String> shoppinglist;
+    private TextView textView;
+    private FirebaseRemoteConfig mFirebaseRemoteConfig;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        listView = (ListView) findViewById(R.id.card_listView);
+        listView = (ListView) findViewById(R.id.card_listView);
+        listView.addHeaderView(new View(this));
+        listView.addFooterView(new View(this));
+
+        shoppinglist = new ArrayList<>();
+        cardArrayAdapter = new CardArrayAdapter(getApplicationContext(), R.layout.list_item_card);
+
+        FloatingActionButton fab = findViewById(R.id.fab);
+        fab.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                createList();
+            }
+        });
+
+        mFirebaseRemoteConfig = FirebaseRemoteConfig.getInstance();
+        mAuth = FirebaseAuth.getInstance();
+
+        FirebaseDatabase database = FirebaseDatabase.getInstance();
+        final TextView textView = (TextView)findViewById(R.id.text);
+
+        onShoppingListClick();
+        checkPlayServices();
+    }
+
+    @Override
+    public void onStart() {
+        super.onStart();
+        if (FirebaseAuth.getInstance().getCurrentUser() == null){
+            startActivityForResult(
+                    AuthUI.getInstance()
+                            .createSignInIntentBuilder()
+                            .build(),
+                    SIGN_IN_REQUEST_CODE
+            );
+        }
+        else {
+            getUser();
+        }
+        checkPlayServices();
+    }
+
+    @Override
+    public void onPause() { super.onPause(); }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        checkPlayServices();
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+    }
+
+    private boolean checkPlayServices() {
+        GoogleApiAvailability apiAvailability = GoogleApiAvailability.getInstance();
+        int resultCode = apiAvailability.isGooglePlayServicesAvailable(this);
+        if (resultCode != ConnectionResult.SUCCESS) {
+            if (apiAvailability.isUserResolvableError(resultCode)) {
+                apiAvailability.getErrorDialog(this, resultCode, GoogleApiAvailability.GOOGLE_PLAY_SERVICES_VERSION_CODE)
+                        .show();
+            } else {
+                Log.i(TAG, "This device is not supported.");
+                finish();
+            }
+            return false;
+        }
+        return true;
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == SIGN_IN_REQUEST_CODE) {
+            if (resultCode == RESULT_OK) {
+                // Successfully signed in
+                FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+                    getUser();
+            } else {
+
+            }
+        }
+    }
+
+    public void getUser() {
+        final Trace myTrace = FirebasePerformance.getInstance().newTrace("test_trace");
+        myTrace.start();
+        mAuth = FirebaseAuth.getInstance();
+        String uid = mAuth.getCurrentUser().getUid();
+        FirebaseDatabase database = FirebaseDatabase.getInstance();
+        DatabaseReference userDB = database.getReference().child("users").child(uid);
+
+        userDB.addValueEventListener(new ValueEventListener() {
+            @Override
+            public void onDataChange(DataSnapshot dataSnapshot) {
+                CurrentUser = dataSnapshot.getValue(User.class);
+            if (CurrentUser != null) {
+                    if (CurrentUser.getShoppingList() != null) {
+                        cardArrayAdapter.clear();
+                        cardArrayAdapter.notifyDataSetChanged();
+                        for (Map.Entry<String, Boolean> entry : CurrentUser.getShoppingList().entrySet()) {
+
+                            Card card = new Card(entry.getKey(), entry.getValue().toString());
+                            shoppinglist.add(card.getLine1());
+                            cardArrayAdapter.add(card);
+                            myTrace.stop();
+                        }
+                        listView.setAdapter(cardArrayAdapter);
+                    }
+                }
+                if(CurrentUser == null) {
+                 createUser();
+                }
+            }
+
+            @Override
+            public void onCancelled(DatabaseError databaseError) {
+                System.out.println("The read failed: " + databaseError.getCode());
+            }
+        });
+    }
+
+    public void createUser() {
+        if (CurrentUser == null && FirebaseAuth.getInstance().getCurrentUser() != null) {
+            FirebaseHandler fire = new FirebaseHandler();
+            fire.writeNewUser(FirebaseAuth.getInstance().getCurrentUser().getUid(),
+                    FirebaseAuth.getInstance().getCurrentUser().getDisplayName(),
+                    FirebaseAuth.getInstance().getCurrentUser().getEmail());
+            getUser();
+        }
+
+    }
+
+    public void createList(){
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Create new list");
+
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_SHORT_MESSAGE);
+        builder.setView(input);
+
+        builder.setPositiveButton("Create", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                m_Text = input.getText().toString();
+
+                FirebaseHandler fire = new FirebaseHandler();
+                fire.addShoppingList(m_Text, CurrentUser);
+            }
+        });
+        builder.setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                dialog.cancel();
+            }
+        });
+        builder.show();
+    }
+
+    public boolean onCreateOptionsMenu(Menu menu){
+        MenuInflater inflater = getMenuInflater();
+        inflater.inflate(R.menu.main_menu, menu);
+        return true;
+    }
+
+    public boolean onOptionsItemSelected(MenuItem item) {
+        switch (item.getItemId()) {
+            case R.id.forceCrash:
+                Crashlytics.getInstance().crash();
+                return true;
+            case R.id.signOut:
+                mAuth.signOut();
+                startActivity(new Intent(this, MainActivity.class));
+                return true;
+            default:
+                return super.onOptionsItemSelected(item);
+        }
+    }
+
+    public void onShoppingListClick(){
+        listView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            @Override
+            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                String shoppingListName = cardArrayAdapter.getItem(position - 1).getLine1();
+          Intent intent = new Intent(getApplicationContext(), ShoppingListActivity.class);
+                intent.putExtra("text", shoppingListName);
+                startActivity(intent);
+            }
+        });
+    }
+}
